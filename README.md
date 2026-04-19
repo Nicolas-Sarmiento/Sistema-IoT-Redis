@@ -14,7 +14,7 @@ Sistema de monitoreo en tiempo real de un sistema IoT simulado con datos de una 
 Clonar el repositorio
 
 ``` 
-git clone 
+git clone https://github.com/Nicolas-Sarmiento/Sistema-IoT-Redis.git
 ``` 
 
 Luego crear el proyecto de node e instalar las dependencias.
