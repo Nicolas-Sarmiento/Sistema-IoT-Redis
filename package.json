@@ -4,16 +4,28 @@
   "description": "Sistema de monitoreo en tiempo real de un sistema IoT simulado con datos de una API pública.",
   "main": "publisher.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "publisher": "node publisher.js",
+    "subscriber": "node suscriber.js",
+    "frontend": "npm --prefix frontend run dev"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "axios": "^1.15.0",
+    "axios": "^1.15.1",
     "express": "^5.2.1",
     "redis": "^5.12.1",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nicolas-Sarmiento/Sistema-IoT-Redis.git"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Nicolas-Sarmiento/Sistema-IoT-Redis/issues"
+  },
+  "homepage": "https://github.com/Nicolas-Sarmiento/Sistema-IoT-Redis#readme"
 }

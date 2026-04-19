@@ -26,6 +26,13 @@ npm init -y
 ``` 
 npm install redis axios express socket.io
 ``` 
+Para el front-end React:
+
+``` 
+cd frontend
+npm install
+```
+
 Crear la base de datos de redis utilizando docker
 
 ``` 
@@ -41,19 +48,22 @@ docker start redis-iot-grupo1
 Luego, solo queda encender los servicios, primero el servicio del publisher:
 
 ``` 
-node publisher.js
+npm run publisher
 ``` 
 
 Luego el servicio del suscriber:
 
 ``` 
-node suscriber.js
+npm run subscriber
 ```
 
 Finalmente, el servicio del front-end:
 
-``` aquí el comando 
 ``` 
+npm run frontend
+``` 
+
+El front-end React queda en la carpeta `frontend` y se conecta al servidor Socket.IO en `http://localhost:3000`.
 
 
 ## Descripción de los datos API
