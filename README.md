@@ -48,13 +48,13 @@ docker start redis-iot-grupo1
 Luego, solo queda encender los servicios, primero el servicio del publisher:
 
 ``` 
-npm publisher
+npm run publisher
 ``` 
 
 Luego el servicio del suscriber:
 
 ``` 
-npm subscriber
+npm run subscriber
 ```
 
 Finalmente, el servicio del front-end:
