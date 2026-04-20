@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Chart, registerables } from 'chart.js';
 import { io } from 'socket.io-client';
+
+Chart.register(...registerables);
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL ?? 'http://localhost:3000';
 const HISTORY_LIMIT = 18;
@@ -51,6 +54,13 @@ const formatDateTime = (value) => {
   }).format(new Date(value));
 };
 
+const formatChartTime = (value) =>
+  new Intl.DateTimeFormat('es-CO', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(new Date(value));
+
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -78,14 +88,19 @@ function formatSummary(summary, totalSensors) {
 }
 
 function createInitialHistory(value, spread) {
+  const baseTime = Date.now();
+
   return Array.from({ length: HISTORY_LIMIT }, (_, index) => {
     const offset = Math.sin(index * 0.7) * spread * 0.35 + Math.cos(index * 0.43) * spread * 0.2;
-    return Number((value + offset).toFixed(1));
+    return {
+      x: baseTime - (HISTORY_LIMIT - index) * 10000,
+      y: Number((value + offset).toFixed(1)),
+    };
   });
 }
 
-function pushHistoryPoint(series, value) {
-  return [...series.slice(1), Number(value.toFixed(1))];
+function pushHistoryPoint(series, value, time = Date.now()) {
+  return [...series.slice(1), { x: time, y: Number(value.toFixed(1)) }];
 }
 
 function buildHistorySeries(sensor) {
@@ -103,74 +118,138 @@ function averageHistorySeries(seriesList) {
   }
 
   return seriesList[0].map((_, index) => {
-    const total = seriesList.reduce((sum, series) => sum + (series[index] ?? 0), 0);
-    return Number((total / seriesList.length).toFixed(1));
+    const total = seriesList.reduce((sum, series) => sum + (series[index]?.y ?? 0), 0);
+    return {
+      x: seriesList[0][index]?.x ?? Date.now(),
+      y: Number((total / seriesList.length).toFixed(1)),
+    };
   });
 }
 
-function sanitizeSeries(values) {
-  let lastValid = 0;
-  return values.map((value) => {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) {
-      lastValid = numeric;
-      return numeric;
+function toRgba(color, alpha) {
+  const hex = color.replace('#', '');
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function heatmapColor(value, minimum, maximum) {
+  const range = Math.max(1, maximum - minimum);
+  const ratio = clamp((value - minimum) / range, 0, 1);
+  const hue = 135 - ratio * 95;
+  return `hsla(${hue}, 54%, 52%, 0.92)`;
+}
+
+function climateHeatScore(sensor) {
+  const temperatureScore = clamp((sensor.temperature - 10) / 25, 0, 1);
+  const humidityScore = clamp(sensor.humidity / 100, 0, 1);
+  const windScore = clamp(sensor.windspeed / 20, 0, 1);
+  const pressureScore = clamp((sensor.pressure - 850) / 180, 0, 1);
+
+  return Number(((temperatureScore * 0.45) + (humidityScore * 0.2) + (windScore * 0.15) + (pressureScore * 0.2)) / 1);
+}
+
+function climateHeatColor(score) {
+  const normalized = clamp(score, 0, 1);
+  const lightness = 20 + normalized * 42;
+  const saturation = 58 + normalized * 30;
+  const hue = 145 - normalized * 110;
+  return `hsla(${hue}, ${saturation}%, ${lightness}%, 0.95)`;
+}
+
+function TimeSeriesChart({ title, unit, points, color, suffix }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) {
+      return undefined;
     }
 
-    return lastValid;
-  });
-}
+    const context = canvasRef.current.getContext('2d');
+    if (!context) {
+      return undefined;
+    }
 
-function Sparkline({ values, color }) {
-  const safeValues = sanitizeSeries(values);
-  const width = 420;
-  const height = 130;
-  const padding = 12;
-  const min = Math.min(...safeValues);
-  const max = Math.max(...safeValues);
-  const spread = Math.max(1, max - min);
-  const points = safeValues
-    .map((value, index) => {
-      const x = padding + (index * (width - padding * 2)) / (values.length - 1);
-      const y = padding + (1 - (value - min) / spread) * (height - padding * 2);
-      return `${x},${y}`;
-    })
-    .join(' ');
+    const chart = new Chart(context, {
+      type: 'line',
+      data: {
+        labels: points.map((point) => formatChartTime(point.x)),
+        datasets: [
+          {
+            label: title,
+            data: points.map((point) => point.y),
+            borderColor: color,
+            backgroundColor: toRgba(color, 0.16),
+            pointBackgroundColor: color,
+            pointBorderColor: '#fff7eb',
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            borderWidth: 3,
+            tension: 0.35,
+            fill: true,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: {
+          mode: 'index',
+          intersect: false,
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label(context) {
+                return `${title}: ${context.parsed.y}${suffix}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(105, 74, 35, 0.08)' },
+            ticks: { color: '#80654b', maxTicksLimit: 6 },
+          },
+          y: {
+            grid: { color: 'rgba(105, 74, 35, 0.08)' },
+            ticks: { color: '#80654b' },
+          },
+        },
+      },
+    });
 
-  return (
-    <svg className="sparkline" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Gráfica histórica">
-      <defs>
-        <linearGradient id={`line-${color.replace('#', '')}`} x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
-          <stop offset="100%" stopColor={color} stopOpacity="1" />
-        </linearGradient>
-      </defs>
-      <path
-        d={`M ${points}`}
-        fill="none"
-        stroke={`url(#line-${color.replace('#', '')})`}
-        strokeWidth="4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {safeValues.map((value, index) => {
-        const x = padding + (index * (width - padding * 2)) / (values.length - 1);
-        const y = padding + (1 - (value - min) / spread) * (height - padding * 2);
-        return <circle key={`${index}-${value}`} cx={x} cy={y} r="4" fill={color} />;
-      })}
-    </svg>
-  );
-}
+    chartRef.current = chart;
 
-function MiniChart({ title, unit, values, color, labels }) {
+    return () => {
+      chart.destroy();
+      chartRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) {
+      return;
+    }
+
+    chart.data.labels = points.map((point) => formatChartTime(point.x));
+    chart.data.datasets[0].data = points.map((point) => point.y);
+    chart.data.datasets[0].borderColor = color;
+    chart.data.datasets[0].backgroundColor = toRgba(color, 0.16);
+    chart.data.datasets[0].pointBackgroundColor = color;
+    chart.update('none');
+  }, [color, points, title, suffix]);
+
   return (
     <section className="mini-chart card">
       <div className="section-label">{title}</div>
-      <Sparkline values={values} color={color} />
-      <div className="chart-footer">
-        <span>{labels[0]}</span>
-        <span>{labels[1]}</span>
-        <span>{labels[2]}</span>
+      <div className="chart-frame">
+        <canvas ref={canvasRef} className="chart-canvas" />
       </div>
       <div className="chart-unit">{unit}</div>
     </section>
@@ -283,6 +362,7 @@ export default function App() {
     x: [24, 46, 76][index],
     y: [72, 46, 23][index],
     size: clamp((sensor.temperature - 15) * 1.7, 16, 42),
+    heatScore: climateHeatScore(sensor),
   }));
 
   return (
@@ -342,7 +422,7 @@ export default function App() {
           <article className="heatmap card">
             <div className="section-header">
               <div>
-                <div className="section-title">Mapa de calor — todas las ciudades</div>
+                <div className="section-title">Mapa de calor — ubicación de sensores</div>
                 <div className="section-subtitle">Distribución de mediciones en tiempo real</div>
               </div>
               <div className="legend">
@@ -350,7 +430,7 @@ export default function App() {
                 <span className="legend-step mint" />
                 <span className="legend-step sage" />
                 <span className="legend-step plum" />
-                <span className="legend-scale">15° - 35°C</span>
+                <span className="legend-scale">Baja actividad → alta actividad</span>
               </div>
             </div>
 
@@ -360,22 +440,28 @@ export default function App() {
                   <span key={`${row}-${col}`} className="grid-cell" />
                 )),
               )}
-              {heatPoints.map((point) => (
-                <div
-                  key={point.id}
-                  className="heat-point"
-                  style={{
-                    left: `${point.x}%`,
-                    top: `${point.y}%`,
-                    width: `${point.size}px`,
-                    height: `${point.size}px`,
-                    background: point.dot,
-                  }}
-                >
-                  <span className="heat-point-label">{point.name}</span>
-                  <span className="heat-point-value">{point.temperature.toFixed(1)}°C</span>
-                </div>
-              ))}
+              {heatPoints.map((point) => {
+                const heatColor = climateHeatColor(point.heatScore);
+                const glow = point.heatScore > 0.7 ? 0.42 : point.heatScore > 0.4 ? 0.28 : 0.18;
+
+                return (
+                  <div
+                    key={point.id}
+                    className="heat-point"
+                    style={{
+                      left: `${point.x}%`,
+                      top: `${point.y}%`,
+                      width: `${point.size}px`,
+                      height: `${point.size}px`,
+                      background: heatColor,
+                      boxShadow: `0 0 18px rgba(155, 91, 34, ${glow})`,
+                    }}
+                  >
+                    <span className="heat-point-label">{point.name}</span>
+                    <span className="heat-point-value">{point.temperature.toFixed(1)}°C</span>
+                  </div>
+                );
+              })}
             </div>
           </article>
 
@@ -411,12 +497,12 @@ export default function App() {
           </aside>
         </section>
 
-        <section className="charts-title">Histórico promedio</section>
+        <section className="charts-title">Temperatura, humedad y presión vs tiempo</section>
         <section className="charts-grid">
-          <MiniChart title="Temperatura (°C)" unit={selectedFarm === 'Todas' ? 'Promedio general' : `Ciudad: ${activeSensor?.name ?? 'Sin datos'}`} values={displayedHistory.temperature} color="#d8842d" labels={['Inicio', 'Medio', 'Actual']} />
-          <MiniChart title="Humedad (%)" unit={selectedFarm === 'Todas' ? 'Promedio general' : `Ciudad: ${activeSensor?.name ?? 'Sin datos'}`} values={displayedHistory.humidity} color="#4f988a" labels={['Inicio', 'Medio', 'Actual']} />
-          <MiniChart title="Presión (hPa)" unit={selectedFarm === 'Todas' ? 'Promedio general' : `Ciudad: ${activeSensor?.name ?? 'Sin datos'}`} values={displayedHistory.pressure} color="#6a8467" labels={['Inicio', 'Medio', 'Actual']} />
-          <MiniChart title="Viento (km/h)" unit={selectedFarm === 'Todas' ? 'Promedio general' : `Ciudad: ${activeSensor?.name ?? 'Sin datos'}`} values={displayedHistory.windspeed} color="#8d5d7b" labels={['Inicio', 'Medio', 'Actual']} />
+          <TimeSeriesChart title="Temperatura vs tiempo" unit={selectedFarm === 'Todas' ? 'Promedio general' : `Ciudad: ${activeSensor?.name ?? 'Sin datos'}`} points={displayedHistory.temperature} color="#d8842d" suffix=" °C" />
+          <TimeSeriesChart title="Humedad vs tiempo" unit={selectedFarm === 'Todas' ? 'Promedio general' : `Ciudad: ${activeSensor?.name ?? 'Sin datos'}`} points={displayedHistory.humidity} color="#4f988a" suffix=" %" />
+          <TimeSeriesChart title="Presión vs tiempo" unit={selectedFarm === 'Todas' ? 'Promedio general' : `Ciudad: ${activeSensor?.name ?? 'Sin datos'}`} points={displayedHistory.pressure} color="#6a8467" suffix=" hPa" />
+          <TimeSeriesChart title="Viento vs tiempo" unit={selectedFarm === 'Todas' ? 'Promedio general' : `Ciudad: ${activeSensor?.name ?? 'Sin datos'}`} points={displayedHistory.windspeed} color="#8d5d7b" suffix=" km/h" />
         </section>
       </main>
     </div>
